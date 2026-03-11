@@ -21,8 +21,10 @@ conda activate poli-baselines
 After which, you can install this package by running
 
 ```bash
-pip install "poli-baselines @ git+https://github.com/MachineLearningLifeScience/poli-baselines.git@main"
+pip install "poli-baselines @ git+https://github.com/bhatt359-beep/poli-baselines.git@main"
 ```
+
+**Monjish's Note: ** Once this is done I will have a DynaPPO solver that the original repo did not.
 
 After this, you could test you installation by running (inside your `poli-baselines` environment):
 
