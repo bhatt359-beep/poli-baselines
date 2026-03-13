@@ -1,0 +1,27 @@
+name: DyNA PPO
+description: "Model-based RL for discrete sequence optimization"
+paper_reference: "Angermueller et al., ICLR 2020"
+paper_url: "https://openreview.net/pdf?id=HklxbgBKvr"
+
+default_hyperparameters:
+  num_experiment_rounds: 1
+  num_model_rounds: 1
+  r_squared_threshold: 0.5
+  sequence_diversity_weight: 0.0
+  sequence_diversity_radius: 2
+  batch_size: 1
+  exploration_rate: 0.1
+
+dependencies:
+  - numpy
+  - scikit-learn
+  - scipy
+  - poli
+
+installation:
+  - "pip install -e ."
+
+testing:
+  - basic_imports: true
+  - smoke_test: true
+  - comparative_benchmark: true
