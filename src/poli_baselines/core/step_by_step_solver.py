@@ -10,6 +10,8 @@ from typing_extensions import Self
 from poli_baselines.core.abstract_solver import AbstractSolver
 from poli_baselines.core.utils.saving.json_encoders import NumpyToListEncoder
 
+from tqdm import tqdm
+
 
 class StepByStepSolver(AbstractSolver):
     def __init__(
@@ -123,7 +125,8 @@ class StepByStepSolver(AbstractSolver):
         if seed is not None:
             seed_python_numpy_and_torch(seed)
 
-        for i in range(max_iter):
+        pbar = tqdm(range(max_iter))
+        for i in pbar:
             # Call the pre-step callbacks
             if pre_step_callbacks is not None:
                 for callback in pre_step_callbacks:
@@ -138,7 +141,7 @@ class StepByStepSolver(AbstractSolver):
                     callback(self)
 
             if verbose:
-                print(f"Iteration {i}: {y}, best so far: {self.get_best_performance()}")
+                pbar.set_description(f"Iteration {i}: {y}, best so far: {self.get_best_performance()}")
 
             if break_at_performance is not None:
                 if y >= break_at_performance:

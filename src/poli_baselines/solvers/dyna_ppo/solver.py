@@ -32,8 +32,15 @@ from sklearn.neighbors import KNeighborsRegressor
 from sklearn.model_selection import cross_val_score
 from scipy.spatial.distance import hamming
 
+# import edlib
+
 from poli_baselines.core.step_by_step_solver import StepByStepSolver
 
+# def edit_dist(x: str, y: str):
+#     """
+#     Computes the edit distance between two strings.
+#     """
+#     return edlib.align(x, y)["editDistance"]
 
 class ActorNetwork(nn.Module):
     """Policy network π_θ that outputs action probabilities."""
@@ -148,6 +155,10 @@ class DynaPPOSolver(StepByStepSolver):
         Minimum R² for surrogate models. Default: 0.5
     use_model_based : bool
         Whether to use surrogate models for rollouts. Default: True
+    density_penalty_weight : float
+        Weight for diversity penalty based on sequence density. Default: 1.0
+    density_radius : int
+        Edit distance threshold for density computation. Default: 2
     """
 
     def __init__(
@@ -157,6 +168,7 @@ class DynaPPOSolver(StepByStepSolver):
         y0: np.ndarray,
         alphabet: list[str] | None = None,
         tokenizer: Callable[[str], list[str]] | None = None,
+        greedy_epsilon: float = 0,
         num_episodes: int = 15,
         ppo_epochs: int = 8,
         batch_size: int = 16,
@@ -169,6 +181,8 @@ class DynaPPOSolver(StepByStepSolver):
         value_coef: float = 0.5,
         r_squared_threshold: float = 0.5,
         use_model_based: bool = True,
+        density_penalty_weight: float = 1.0,
+        density_radius: int = 2,
     ):
         """Initialize DyNA PPO solver."""
         # Handle tokenization
@@ -198,6 +212,9 @@ class DynaPPOSolver(StepByStepSolver):
         self.alphabet_size = len(self.alphabet)
         self.tokenizer = tokenizer
         self.seq_len = len(x0[0]) if x0.ndim > 1 else len(x0)
+        
+        # Greedy Epsilon
+        self.greedy_epsilon = greedy_epsilon
 
         # PPO hyperparameters
         self.num_episodes = num_episodes
@@ -212,6 +229,10 @@ class DynaPPOSolver(StepByStepSolver):
         # Model-based settings
         self.r_squared_threshold = r_squared_threshold
         self.use_model_based = use_model_based
+
+        # Diversity penalty settings
+        self.density_penalty_weight = density_penalty_weight
+        self.density_radius = density_radius
 
         # Initialize actor and critic networks
         # State: one-hot encoded partial sequence + positional encoding
@@ -266,6 +287,44 @@ class DynaPPOSolver(StepByStepSolver):
         state = np.concatenate([one_hot.flatten(), [position / self.seq_len]])
         return torch.FloatTensor(state)
 
+    def _compute_density_penalty(self, sequence: np.ndarray) -> float:
+        """
+        Compute density-based penalty for a sequence.
+
+        Penalizes sequences similar to previously proposed ones, encouraging
+        exploration of new regions of the search space.
+
+        Parameters
+        ----------
+        sequence : np.ndarray
+            The sequence to evaluate
+
+        Returns
+        -------
+        float
+            Density penalty value (sum of linearly decaying weights for nearby sequences)
+        """
+        xs, ys = self.get_history_as_arrays()
+
+        if len(xs) == 0:
+            return 0.0
+
+        seq_str = "".join(str(s) for s in sequence)
+        penalty = 0.0
+
+        for x_hist in xs:
+            hist_str = "".join(str(s) for s in x_hist)
+            # Compute Hamming distance
+            distance = hamming(list(seq_str), list(hist_str))
+
+            # Only penalize if within density radius
+            if distance < self.density_radius:
+                # Linear weight decay: weight = 1 - (distance / radius)
+                weight = 1.0 - (distance / self.density_radius)
+                penalty += weight
+
+        return penalty
+
     def _sample_episode(self) -> Tuple[np.ndarray, List, List, List, List, List]:
         """
         Collect a complete episode trajectory.
@@ -317,7 +376,6 @@ class DynaPPOSolver(StepByStepSolver):
             partial_seq = np.append(partial_seq, token)
 
         # Complete sequence - get fitness
-        seq_str = "".join(partial_seq)
         if self.model_based_enabled:
             seq_encoded = self._encode_sequences(partial_seq.reshape(1, -1))
             predictions = [
@@ -329,9 +387,13 @@ class DynaPPOSolver(StepByStepSolver):
         else:
             fitness = self.black_box(np.array([partial_seq]))[0, 0]
 
+        # Apply density-based diversity penalty
+        density_penalty = self._compute_density_penalty(partial_seq)
+        final_reward = max(fitness, -2) - self.density_penalty_weight * density_penalty
+
         # Build trajectory rewards: only final step has real reward
         # Earlier steps use critic value bootstrapping  
-        rewards = [0.0] * (self.seq_len - 1) + [fitness]
+        rewards = [0.0] * (self.seq_len - 1) + [final_reward]
 
         return partial_seq, states, actions, rewards, log_probs, values
 
@@ -492,20 +554,19 @@ class DynaPPOSolver(StepByStepSolver):
         Mixes actor policy with random actions for better space exploration.
         """
         partial_seq = np.array([])
-        epsilon = 0.25  # Epsilon-greedy exploration rate (25% random)
 
         with torch.no_grad():
             for t in range(self.seq_len):
                 # Epsilon-greedy: random action sometimes, otherwise from actor
-                # if random.random() < epsilon:
-                #     # Random action for exploration
-                #     action = random.randint(0, self.alphabet_size - 1)
-                # else:
+                if random.random() < self.greedy_epsilon:
+                    # Random action for exploration
+                    action = random.randint(0, self.alphabet_size - 1)
+                else:
                 # Actor-based action
-                state = self._encode_state(partial_seq, t)
-                logits = self.actor(state)
-                dist = Categorical(logits=logits)
-                action = dist.sample().item()
+                    state = self._encode_state(partial_seq, t)
+                    logits = self.actor(state)
+                    dist = Categorical(logits=logits)
+                    action = dist.sample().item()
 
                 # Add token to sequence
                 token = self.idx_to_string.get(action, self.alphabet_without_empty[0])
@@ -672,6 +733,7 @@ if __name__ == "__main__":
         black_box=f,
         x0=x0,
         y0=y0,
+        greedy_epsilon=0.25,
     )
 
     max_iter = 1000
