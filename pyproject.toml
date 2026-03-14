@@ -36,6 +36,11 @@ requires-python = ">=3.10"
 [project.optional-dependencies]
 dev = ["black", "tox", "pytest"]
 docs = ["sphinx", "furo"]
+dyna_ppo = [
+    "torch>=2.0.0",
+    "scikit-learn>=1.3.0",
+    "scipy>=1.10.0",
+]
 alebo = [
     "scikit-learn",
     "ax-platform==0.4.0",
