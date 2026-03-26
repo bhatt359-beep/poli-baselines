@@ -376,7 +376,7 @@ class DynaPPOSolver(StepByStepSolver):
             partial_seq = np.append(partial_seq, token)
 
         # Complete sequence - get fitness
-        if self.model_based_enabled:
+        if self.model_based_enabled and self.use_model_based:
             seq_encoded = self._encode_sequences(partial_seq.reshape(1, -1))
             predictions = [
                 model.predict(seq_encoded)[0]
@@ -389,7 +389,7 @@ class DynaPPOSolver(StepByStepSolver):
 
         # Apply density-based diversity penalty
         density_penalty = self._compute_density_penalty(partial_seq)
-        final_reward = max(fitness, -2) - self.density_penalty_weight * density_penalty
+        final_reward = max(fitness, -1) - self.density_penalty_weight * density_penalty
 
         # Build trajectory rewards: only final step has real reward
         # Earlier steps use critic value bootstrapping  
@@ -443,7 +443,7 @@ class DynaPPOSolver(StepByStepSolver):
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         returns = [adv + val for adv, val in zip(advantages, values)]
 
-        return advantages.tolist(), returns
+        return list(advantages), returns
 
     def _ppo_update(self, states: List, actions: List, old_log_probs: List,
                     advantages: List, returns: List) -> Tuple[float, float, float]:
