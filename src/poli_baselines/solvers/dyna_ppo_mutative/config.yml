@@ -1,0 +1,29 @@
+name: DyNA PPO Mutative
+description: "Mutative model-based RL for discrete sequence optimization"
+paper_reference: "Angermueller et al., ICLR 2020; mutative variant inspired by FLEXS"
+paper_url: "https://openreview.net/pdf?id=HklxbgBKvr"
+
+default_hyperparameters:
+  num_experiment_rounds: 1
+  num_model_rounds: 1
+  max_mutation_steps: 8
+  r_squared_threshold: 0.5
+  density_penalty_weight: 0.0
+  density_radius: 2
+  elite_fraction: 0.25
+  greedy_epsilon: 0.1
+
+dependencies:
+  - numpy
+  - scikit-learn
+  - scipy
+  - torch
+  - poli
+
+installation:
+  - "pip install -e ."
+
+testing:
+  - basic_imports: true
+  - smoke_test: true
+  - script_benchmark: true
