@@ -88,6 +88,10 @@ class DynaPPOMutativeSolver(StepByStepSolver):
         tokenizer: Callable[[str], list[str]] | None = None,
         device: str = "cpu",
         greedy_epsilon: float = 0.1,
+        epsilon_decay_start: int = 100,
+        epsilon_decay_end: float = 0.05,
+        greedy: bool = False,
+        top_k: int = 1,
         num_experiment_rounds: int = 1,
         num_model_rounds: int = 1,
         max_mutation_steps: int = 8,
@@ -135,6 +139,10 @@ class DynaPPOMutativeSolver(StepByStepSolver):
 
         self.device = torch.device(device)
         self.greedy_epsilon = greedy_epsilon
+        self.epsilon_decay_start = epsilon_decay_start
+        self.epsilon_decay_end = epsilon_decay_end
+        self.greedy = greedy
+        self.top_k = top_k
         self.num_experiment_rounds = num_experiment_rounds
         self.num_model_rounds = num_model_rounds
         self.max_mutation_steps = max_mutation_steps
@@ -232,10 +240,18 @@ class DynaPPOMutativeSolver(StepByStepSolver):
         if finite_mask.any():
             xs, scores = xs[finite_mask], scores[finite_mask]
 
-        elite_count = max(1, int(np.ceil(len(xs) * self.elite_fraction)))
-        elite_indices = np.argsort(scores)[-elite_count:]
-        chosen_index = int(random.choice(elite_indices.tolist()))
-        return xs[chosen_index].copy(), self._sanitize_fitness(float(scores[chosen_index]))
+        if self.greedy:
+            # Pick randomly from top_k sequences (like RandomMutation with greedy=True)
+            top_k_count = max(1, min(self.top_k, len(xs)))
+            top_k_indices = np.argsort(scores)[-top_k_count:]
+            chosen_index = int(np.random.choice(top_k_indices.tolist()))
+            return xs[chosen_index].copy(), self._sanitize_fitness(float(scores[chosen_index]))
+        else:
+            # Pick randomly from elite fraction (original behavior)
+            elite_count = max(1, int(np.ceil(len(xs) * self.elite_fraction)))
+            elite_indices = np.argsort(scores)[-elite_count:]
+            chosen_index = int(random.choice(elite_indices.tolist()))
+            return xs[chosen_index].copy(), self._sanitize_fitness(float(scores[chosen_index]))
 
     def _decode_action(self, action: int) -> Tuple[int, str]:
         position = action // self.mutable_alphabet_size
@@ -288,19 +304,37 @@ class DynaPPOMutativeSolver(StepByStepSolver):
         penalty = self.density_penalty_weight * self._compute_density_penalty(sequence)
         return self._predict_surrogate_fitness(sequence) - penalty
 
+    def _get_current_epsilon(self) -> float:
+        """
+        Compute epsilon for epsilon-greedy exploration.
+        
+        Linearly decays from initial greedy_epsilon to epsilon_decay_end
+        starting at iteration epsilon_decay_start.
+        Before decay_start, returns full greedy_epsilon (maximum exploration).
+        """
+        if self.iteration < self.epsilon_decay_start:
+            return self.greedy_epsilon
+        
+        # Linear decay from greedy_epsilon to epsilon_decay_end
+        decay_progress = min(1.0, (self.iteration - self.epsilon_decay_start) / max(1, self.epsilon_decay_start))
+        current_epsilon = self.greedy_epsilon - (self.greedy_epsilon - self.epsilon_decay_end) * decay_progress
+        return current_epsilon
+
     def _generate_experimental_rollout(self) -> np.ndarray:
         current_sequence, current_fitness = self._select_start_sequence()
         states = []
         actions = []
         log_probs = []
         values = []
+        
+        current_epsilon = self._get_current_epsilon()
 
         for mutation_step in range(self.max_mutation_steps):
             state = self._encode_state(current_sequence, current_fitness, mutation_step)
             states.append(state)
 
             with torch.no_grad():
-                if random.random() < self.greedy_epsilon:
+                if random.random() < current_epsilon:
                     action = random.randrange(self.seq_len * self.mutable_alphabet_size)
                     logits = self.actor(state)
                     dist = Categorical(logits=logits)
