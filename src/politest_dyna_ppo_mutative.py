@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+from poli.core.util.proteins.defaults import AMINO_ACIDS
+
 try:
     from poli.objective_repository import EhrlichHoloProblemFactory
 except ImportError:
@@ -32,11 +34,12 @@ class ProgressTracker:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run mutative DyNA PPO on Ehrlich Holo.")
     parser.add_argument("--iterations", type=int, default=300)
-    parser.add_argument("--trials", type=int, default=10, help="Number of independent trials")
+    parser.add_argument("--trials", type=int, default=5, help="Number of independent trials")
     parser.add_argument("--sequence-length", type=int, default=15)
     parser.add_argument("--motif-length", type=int, default=7)
     parser.add_argument("--n-motifs", type=int, default=2)
-    parser.add_argument("--plot-path", type=Path, default=Path("score_per_iteration_mutative.png"))
+    parser.add_argument("--initial-samples", type=int, default=10, help="Number of initial samples")
+    parser.add_argument('--pest-control', action='store_true')
     args = parser.parse_args()
 
     print("Starting mutative DyNA PPO script")
@@ -45,6 +48,9 @@ def main() -> None:
     print("=" * 60)
 
     trial_results = []
+    
+    alphabet = ['A', 'C', 'T', 'G', 'U'] if args.pest_control else AMINO_ACIDS
+    
 
     for trial_idx in range(args.trials):
         print(f"\n[Trial {trial_idx + 1}/{args.trials}]")
@@ -53,15 +59,18 @@ def main() -> None:
             sequence_length=args.sequence_length,
             motif_length=args.motif_length,
             n_motifs=args.n_motifs,
-            # alphabet=['A', 'B', 'C', 'D', 'E'] # Comment out if not doing Pest Control
+            alphabet=alphabet,
         )
-        f, x0 = problem.black_box, problem.x0
+        f = problem.black_box
+        x0 = f.initial_solution(n_samples=args.initial_samples)
         y0 = f(x0)
 
         if trial_idx == 0:
             print("Problem factory created (Ehrlich Holo optimization)")
-            print(f"  Initial population size: {len(x0)}")
-            print(f"  Initial best score: {float(y0.max()):.4f}")
+        print(f"  Initial population size: {len(x0)}")
+        print(f"  Initial best score: {float(y0.max()):.4f}")
+        
+        problem.seed = trial_idx
 
         device = "mps" # "cuda" if torch.cuda.is_available() else "cpu"
 
